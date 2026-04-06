@@ -4,6 +4,7 @@ import scipy
 from time import time
 from argparse import ArgumentParser
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import RidgeClassifier
 
 
 def calculate_precision():
@@ -39,11 +40,15 @@ def load_tweet_data(input: str) -> dict:
 def build_classifier(df: pd.DataFrame):
     start = time()
     text_vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=0.5, min_df=5, stop_words="english")
-
     tweets = df["Anotated Tweet"]
     classes = df["Class"]
 
-    return None
+    # use defaults for now
+    x_vector = text_vectorizer.fit_transform(tweets)
+    clf = RidgeClassifier(solver="sparse_cg")
+    clf.fit(x_vector, classes)
+
+    return clf
 
 
 def clean_data(data: pd.DataFrame) -> pd.DataFrame:
@@ -71,8 +76,9 @@ if __name__ == "__main__":
         df_data["df"] = clean_data(df_data["df"])
 
         # build the classifier
-        classifier = build_classifier(df_data["df"])
+        df_data["classifier"] = build_classifier(df_data["df"])
 
+        
 
     # load the test data after we train our model
     # test_dfs = load_tweet_data(opts.test)
