@@ -40,10 +40,11 @@ def load_tweet_data(input: str) -> dict:
 def build_classifier(df: pd.DataFrame):
     start = time()
     text_vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=0.5, min_df=5, stop_words="english")
-    tweets = df["Anotated Tweet"]
+    tweets = list(df["Anotated Tweet"])
     classes = df["Class"]
 
     # use defaults for now
+    # print(tweets)
     x_vector = text_vectorizer.fit_transform(tweets)
     clf = RidgeClassifier(solver="sparse_cg")
     clf.fit(x_vector, classes)
@@ -56,6 +57,8 @@ def clean_data(data: pd.DataFrame) -> pd.DataFrame:
     df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
     df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
     df = df[(df["Class"] != 2) & (df["Class"] != "!!!!") & (df["Class"] != "irrevelant")] # remove any classes that are not 0, 1, -1
+    df = df.dropna()
+    df["Class"] = df["Class"].astype("string")
 
     # todo:: fix datetimes?
 
@@ -74,7 +77,7 @@ if __name__ == "__main__":
 
     for key,df_data in training_dfs.items():
         df_data["df"] = clean_data(df_data["df"])
-
+        print(df_data["df"])
         # build the classifier
         df_data["classifier"] = build_classifier(df_data["df"])
 
