@@ -34,12 +34,11 @@ def load_tweet_data(input: str) -> dict:
         obama_df = data["Obama"]
         romney_df = data["Romney"]
 
-    return {"Obama": {"df": obama_df, "classifier": None}, "Romney": {"df": romney_df, "classifier": None}}
+    return {"Obama": obama_df, "Romney": romney_df}
 
 
-def build_classifier(df: pd.DataFrame):
+def build_classifier(df: pd.DataFrame, text_vectorizer):
     start = time()
-    text_vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=0.5, min_df=5, stop_words="english")
     tweets = list(df["Anotated Tweet"])
     classes = df["Class"]
 
@@ -50,6 +49,10 @@ def build_classifier(df: pd.DataFrame):
     clf.fit(x_vector, classes)
 
     return clf
+
+
+def test_classifier(clf, test_data):
+    ...
 
 
 def clean_data(data: pd.DataFrame) -> pd.DataFrame:
@@ -73,14 +76,34 @@ if __name__ == "__main__":
     args.add_argument("-o", "--output", help="The file to save the output to.")
     opts = args.parse_args()
 
-    training_dfs = load_tweet_data(opts.training)
+    training_data = load_tweet_data(opts.training)
+    test_data = load_tweet_data(opts.test)
 
+    # create our text vectorizer
+    text_vectorizer = TfidfVectorizer(sublinear_tf=True, max_df=1, min_df=1, stop_words="english")
+
+    # build classifiers first
     for key,df_data in training_dfs.items():
         df_data["df"] = clean_data(df_data["df"])
         print(df_data["df"])
         # build the classifier
-        df_data["classifier"] = build_classifier(df_data["df"])
+        df_data["classifier"] = build_classifier(df_data["df"], text_vectorizer)
 
+    test_dfs = load_tweet_data(opts.test)
+
+    # then test Obama
+    test_dfs["Obama"]["df"] = clean_data(test_dfs["Obama"]["df"])
+    print(test_dfs["Obama"]["df"])
+    obama_classifier = training_dfs["Obama"]["classifier"]
+    test_tweets = test_dfs["Obama"]["df"]["Anotated Tweet"].tolist()
+    transformed_tweets = text_vectorizer.transform(test_tweets)
+    prediction = obama_classifier.predict(transformed_tweets)
+
+    print(prediction)
+
+    # for key,test_data in test_dfs.items():
+    #     test_data["df"] = clean_data(test_data["df"])
+    #     print(test_data["df"])
         
 
     # load the test data after we train our model
