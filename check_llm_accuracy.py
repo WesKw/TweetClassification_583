@@ -12,13 +12,12 @@ CLASS_MAPPING = {
 
 
 def determine_accuracy(test, result, name=""):
-    correct_count = 0
     total_count = len(test["Class"])
-    for (idx1, row1),(idx2, row2) in zip(test.iterrows(), result.iterrows()):
-        if row1["Class"] == row2["Class"]:
-            correct_count+=1
-
-    print(f"Accuracy for {name}: {correct_count/total_count:.02f}")
+    test["Your Class"] = result["Class"]
+    test["Correct"] = (test["Class"] == test["Your Class"])
+    test["Correct"] = test["Correct"].astype("int")
+    correct = test["Correct"].sum()
+    print(f"Accuracy for {name}: {correct/total_count:.02f}")
 
 
 def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
@@ -59,15 +58,15 @@ if __name__ == "__main__":
     opts = args.parse_args()
 
     test_df = load_tweet_data(opts.test_input)
-    obama_df = clean_data(test_df["Obama"])
-    romney_df = clean_data(test_df["Romney"])
+    obama_df = clean_data(test_df["Obama"]).reset_index()
+    romney_df = clean_data(test_df["Romney"]).reset_index()
     print(obama_df)
     print(romney_df)
     results_df = load_tweet_data(opts.results)
-    obama_results = results_df["Obama"]
+    obama_results = results_df["Obama"].set_axis(labels=["Tweet", "Class"], axis=1)
     obama_results["Class"] = obama_results["Class"].map(lambda x: CLASS_MAPPING[x])
     obama_results["Class"] = obama_results["Class"].astype("string")
-    romney_results = results_df["Romney"]
+    romney_results = results_df["Romney"].set_axis(labels=["Tweet", "Class"], axis=1)
     romney_results["Class"] = romney_results["Class"].map(lambda x: CLASS_MAPPING[x])
     romney_results["Class"] = romney_results["Class"].astype("string")
     print(obama_results)
