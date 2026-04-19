@@ -1,5 +1,4 @@
 import pandas as pd
-import scipy
 
 from time import time
 from argparse import ArgumentParser
@@ -73,6 +72,7 @@ def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     if not ignore_class:
         df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
     df = df.dropna()
+    df["Anotated Tweet"] = df["Anotated Tweet"].str.lower()
 
     # todo:: fix datetimes?
 
@@ -80,14 +80,7 @@ def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     return df
 
 
-if __name__ == "__main__":
-    args = ArgumentParser()
-    args.add_argument("training", help="The training data to use for tweet classification.")
-    args.add_argument("test", help="The test data used to determine accuracy.")
-    args.add_argument("--test-has-labels", action="store_true", help="If the test data has class labels, use these to calculate evaluation metrics.")
-    args.add_argument("-o", "--output", help="The file to save the output to.")
-    opts = args.parse_args()
-
+def train_with_full_dataset(opts):
     training_data = load_tweet_data(opts.training)
     obama_training_data = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
     romney_training_data = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
@@ -113,6 +106,7 @@ if __name__ == "__main__":
     romney_tweets = list(romney_test_data["Anotated Tweet"])
     romney_correct_classes = list(romney_test_data["Class"])
 
+    ## USE GENERATED TWEETS FOR TESTING
     # test Obama
     obama_prediction = test_classifier(obama_classifier, obama_tweets, obama_correct_classes, obama_text_vectorizer, "Obama Classifier", opts.test_has_labels)
     obama_test_data["Your Class"] = obama_prediction
@@ -122,3 +116,53 @@ if __name__ == "__main__":
     romney_prediction = test_classifier(romney_classifier, romney_tweets, romney_correct_classes, romney_text_vectorizer, "Romney Classifier", opts.test_has_labels)
     romney_test_data["Your Class"] = romney_prediction
     print(romney_test_data)
+
+
+def train_with_split_dataset(opts):
+    training_data = load_tweet_data(opts.training)
+    obama_training_data = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
+    romney_training_data = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
+    
+    # sample test data from training data -> 80-20 split
+    obama_test_data = obama_training_data.sample(frac=0.20)
+    obama_training_data = obama_training_data.drop(obama_test_data.index)
+    
+    romney_test_data = romney_training_data.sample(frac=0.20)
+    romney_training_data = romney_training_data.drop(romney_test_data.index)
+
+    # create our text vectorizers
+    obama_text_vectorizer = TfidfVectorizer(sublinear_tf=True, strip_accents='ascii', max_df=0.5, min_df=0.0005, stop_words='english')
+    romney_text_vectorizer = TfidfVectorizer(sublinear_tf=True, strip_accents='ascii', max_df=0.5, min_df=0.0005, stop_words='english')
+
+    # build obama and romney classifiers
+    obama_classifier = build_basic_classifier(obama_training_data, obama_text_vectorizer)
+    romney_classifier = build_basic_classifier(romney_training_data, romney_text_vectorizer)
+
+    # set up test data
+    obama_tweets = list(obama_test_data["Anotated Tweet"])
+    obama_correct_classes = list(obama_test_data["Class"])
+    romney_tweets = list(romney_test_data["Anotated Tweet"])
+    romney_correct_classes = list(romney_test_data["Class"])
+
+    ## USE GENERATED TWEETS FOR TESTING
+    # test Obama
+    obama_prediction = test_classifier(obama_classifier, obama_tweets, obama_correct_classes, obama_text_vectorizer, "Obama Classifier", opts.test_has_labels)
+    obama_test_data["Your Class"] = obama_prediction
+    print(obama_test_data)
+    
+    # test Romney
+    romney_prediction = test_classifier(romney_classifier, romney_tweets, romney_correct_classes, romney_text_vectorizer, "Romney Classifier", opts.test_has_labels)
+    romney_test_data["Your Class"] = romney_prediction
+    print(romney_test_data)
+
+
+if __name__ == "__main__":
+    args = ArgumentParser()
+    args.add_argument("training", help="The training data to use for tweet classification.")
+    args.add_argument("test", help="The test data used to determine accuracy.")
+    args.add_argument("--test-has-labels", action="store_true", help="If the test data has class labels, use these to calculate evaluation metrics.")
+    args.add_argument("-o", "--output", help="The file to save the output to.")
+    opts = args.parse_args()
+
+    # train_with_full_dataset(opts)
+    train_with_split_dataset(opts)
