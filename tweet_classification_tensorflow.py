@@ -13,6 +13,11 @@ VALID_CLASSES=['-1', '0', '1']
 
 MAX_SEQUENCE_LENGTH=140 # tweets used to be maxed out at 140 characters
 MAX_FEATURES=2500 # start low for now
+SPLIT_SEED=42
+
+
+def evaluate_model():
+    ...
 
 
 def load_tweet_data(input: str) -> dict:
@@ -36,68 +41,78 @@ def tweet_standardization(input):
     return tf.strings.regex_replace(stripped, '[%s]' % re.escape(string.punctuation), '')
 
 
-def learn_tweets(training: pd.DataFrame, test: pd.DataFrame, validation: pd.DataFrame):
-    # lets ignore the dates and times initially...
-    df = training.drop(columns=["index", "date", "time"]).reset_index()
-
-    # get pandas dfs ready for training
-    # df = training
-    targets = training.pop("Class")
-
-    print(df.dtypes)
-    print(targets)
+def convert_pandas_df_to_tf_dataset(df: pd.DataFrame, batch_size=32):
+    # convert pandas dataframe to tf dataset
+    df = df.drop(columns=["index", "date", "time"]).reset_index()
+    # targets = df.pop("Class")
+    dataset = tf.data.Dataset.from_tensor_slices((df["Anotated Tweet"].values, df["Class"].values))
+    dataset = dataset.batch(batch_size=batch_size, drop_remainder=True).shuffle(buffer_size=batch_size)
+    # dataset = dataset
+    return dataset
 
 
+# this adapts the tensorflow tutorial on sentiment analysis for tweet data: https://www.tensorflow.org/tutorials/keras/text_classification
+def do_learning(data: pd.DataFrame):
+    dataset = convert_pandas_df_to_tf_dataset(data)  
+    split_data = tf.keras.utils.split_dataset(dataset, left_size=0.8, right_size=0.2, shuffle=True, seed=SPLIT_SEED)
+    training_data = split_data[0]
+    testing_data = split_data[1]
+    training_data,validation_data = tf.keras.utils.split_dataset(training_data, left_size=0.8, right_size=0.2, shuffle=True, seed=SPLIT_SEED)
 
-    # sequence_length = MAX_SEQUENCE_LENGTH
-    # max_features = MAX_FEATURES
+    # create vectorization layer
+    vectorizer = layers.TextVectorization(standardize=tweet_standardization, output_mode='int', output_sequence_length=MAX_SEQUENCE_LENGTH)
 
-    # vectorize = layers.TextVectorization(standardize=tweet_standardization, max_tokens=max_features, output_mode='int', output_sequence_length=sequence_length)
+    train_text = training_data.map(lambda x, y: x)
+    vectorizer.adapt(train_text)
 
+    def vectorize_text(text, label):
+        text = tf.expand_dims(text, -1)
+        return vectorizer(text), label
+    
+    text_batch, label_batch = next(iter(training_data))
+    first_review, first_label = text_batch[0], label_batch[0]
+    # print("Tweet", first_review)
+    # print(training_data)
+    # print("Class", training_data.class_names)
+    # print("Vectorized Tweet", vectorize_text(first_review, first_label))
+    # print("Tweet numpy -> ", vectorize_text(first_review, first_label)[0].numpy())
+    # print("5932 ->", vectorizer.get_vocabulary()[5932])
+    # print("2 ->", vectorizer.get_vocabulary()[2])
 
+    # apply vectorization to the datasets
+    train_dataset = training_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
+    validation_dataset = validation_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
+    test_dataset = testing_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
 
-# def build_basic_classifier(df: pd.DataFrame, text_vectorizer):
-#     start = time()
-#     tweets = list(df["Anotated Tweet"])
-#     classes = df["Class"]
+    # create neural network
+    embedding_dim = 16
+    model = tf.keras.Sequential([
+        layers.Embedding(MAX_FEATURES, embedding_dim),
+        layers.GlobalAveragePooling1D(),
+        layers.Dense(16, activation='relu'),
+        layers.Dense(3, activation='softmax')
+    ])
+    model.summary()
 
-#     # use defaults for now
-#     # print(tweets)
-#     x_vector = text_vectorizer.fit_transform(tweets)
-#     clf = RidgeClassifier(solver="sparse_cg")
-#     clf.fit(x_vector, classes)
-#     print(f"Time spent building classifier: {time() - start}s")
+    model.compile(loss=losses.SparseCategoricalCrossentropy(), optimizer='adam', metrics=['accuracy'])
+    epochs=10
+    history = model.fit(train_dataset, validation_data=validation_dataset, epochs=epochs)
 
-#     return clf
+    loss,accuracy = model.evaluate(test_dataset)
+    print(f"Loss={loss}")
+    print(f"Accuracy={accuracy}")
 
-
-# def test_classifier(classifier, tweets, correct_classes, vectorizer, classifier_name="", print_evaluation=False):
-#     transformed_tweets = vectorizer.transform(tweets)
-#     prediction = classifier.predict(transformed_tweets)
-
-#     # print(prediction)
-#     if print_evaluation:
-#         precision = precision_score(correct_classes, prediction, labels=VALID_CLASSES, average=None)
-#         recall = recall_score(correct_classes, prediction, labels=VALID_CLASSES, average=None)
-#         f1score = f1_score(correct_classes, prediction, labels=VALID_CLASSES, average=None)
-#         accuracy = accuracy_score(correct_classes, prediction)
-
-#         print(f"Evaluation for {classifier_name}:")
-#         print(f"    Accuracy: {accuracy:.02f}")
-#         print(f"    Precision: [ Negative: {precision[0]:.02f} | Mixed: {precision[1]:.02f} | Positive: {precision[2]:.02f} ]")
-#         print(f"    Recall: [ Negative: {recall[0]:.02f} | Mixed: {recall[1]:.02f} | Positive: {recall[2]:.02f} ]")
-#         print(f"    F1 Score: [ Negative: {f1score[0]:.02f} | Mixed: {f1score[1]:.02f} | Positive: {f1score[2]:.02f} ]")
-
-#     return prediction
+    return None
 
 
 def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     df = data.drop(index=0)
     df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
     df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
-    df["Class"] = df["Class"].astype("string")
+    df["Class"] = df["Class"].astype("str") # convert class labels to string for easier filtering
     if not ignore_class:
         df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
+    df["Class"] = df["Class"].astype("int") # convert class labels back to int after filtering
     df = df.dropna()
 
     # standardize text data?
@@ -121,19 +136,11 @@ if __name__ == "__main__":
 
     # setup obama training,validation,test sets using the input data
     obama_training = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
-    obama_validation = obama_training.sample(frac=0.2)
-    obama_training = obama_training.drop(obama_validation.index)
-    obama_test = obama_training.sample(frac=0.33)
-    obama_training = obama_training.drop(obama_test.index)
-    classifier = learn_tweets(obama_training, obama_test, obama_validation)
+    classifier = do_learning(obama_training)
 
     # setup romney training,validation,test sets using the input data
-    romney_training = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
-    romney_validation = romney_training.sample(frac=0.2)
-    romney_training = romney_training.drop(romney_validation.index)
-    romney_test = romney_training.sample(frac=0.33)
-    romney_training = romney_training.drop(romney_test.index)
-    classifier = learn_tweets(romney_training, romney_test, romney_validation)
+    # romney_training = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
+    # classifier = do_learning(romney_training)
 
     # create our text vectorizers
     # obama_text_vectorizer = TfidfVectorizer(sublinear_tf=True, strip_accents='ascii', max_df=0.5, min_df=0.0005, stop_words='english')
