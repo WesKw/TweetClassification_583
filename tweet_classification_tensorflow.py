@@ -2,6 +2,7 @@ import pandas as pd
 import tensorflow as tf
 import re
 import string
+import requests
 
 from time import time
 from argparse import ArgumentParser
@@ -10,14 +11,10 @@ from tensorflow.keras import losses
 
 VALID_CLASSES=['-1', '0', '1']
 
-
 MAX_SEQUENCE_LENGTH=140 # tweets used to be maxed out at 140 characters
-MAX_FEATURES=2500 # start low for now
+MAX_FEATURES=15000
 SPLIT_SEED=42
-
-
-def evaluate_model():
-    ...
+BUFFER_SIZE=32
 
 
 def load_tweet_data(input: str) -> dict:
@@ -37,6 +34,7 @@ def load_tweet_data(input: str) -> dict:
 # standardize tweet text
 def tweet_standardization(input):
     lower = tf.strings.lower(input)
+    # remove punctuation and various oddities (hyperlinks)
     stripped = tf.strings.regex_replace(lower, r'<e>|<\/e>|#[\S]+|[^a-zA-Z\d\s:]+|http.[\S]+', '')
     return tf.strings.regex_replace(stripped, '[%s]' % re.escape(string.punctuation), '')
 
@@ -52,15 +50,29 @@ def convert_pandas_df_to_tf_dataset(df: pd.DataFrame, batch_size=32):
 
 
 # this adapts the tensorflow tutorial on sentiment analysis for tweet data: https://www.tensorflow.org/tutorials/keras/text_classification
-def do_learning(data: pd.DataFrame):
-    dataset = convert_pandas_df_to_tf_dataset(data)  
+def do_learning(data: pd.DataFrame, classifier_name: str, custom_test_data=None):
+    batch_size=...
+
+    dataset = convert_pandas_df_to_tf_dataset(data, BUFFER_SIZE)  
     split_data = tf.keras.utils.split_dataset(dataset, left_size=0.8, right_size=0.2, shuffle=True, seed=SPLIT_SEED)
-    training_data = split_data[0]
-    testing_data = split_data[1]
-    training_data,validation_data = tf.keras.utils.split_dataset(training_data, left_size=0.8, right_size=0.2, shuffle=True, seed=SPLIT_SEED)
+    training_data = None
+    testing_data = None
+
+    # if we're using custom test data, convert it to a tf dataset and standardize.
+    if custom_test_data is not None:
+        training_data = split_data[0]
+        validation_data = split_data[1]
+        testing_data = convert_pandas_df_to_tf_dataset(custom_test_data, BUFFER_SIZE)
+    else:
+        # otherwise just use the split data
+        training_data = split_data[0]
+        testing_data = split_data[1]    
+        # build the validation set like usual
+        training_data,validation_data = tf.keras.utils.split_dataset(training_data, left_size=0.8, right_size=0.2, shuffle=True, seed=SPLIT_SEED)
 
     # create vectorization layer
     vectorizer = layers.TextVectorization(standardize=tweet_standardization, output_mode='int', output_sequence_length=MAX_SEQUENCE_LENGTH)
+    # vectorizer = layers.TextVectorization(standardize=tweet_standardization, output_mode='tf_idf')
 
     train_text = training_data.map(lambda x, y: x)
     vectorizer.adapt(train_text)
@@ -71,13 +83,6 @@ def do_learning(data: pd.DataFrame):
     
     text_batch, label_batch = next(iter(training_data))
     first_review, first_label = text_batch[0], label_batch[0]
-    # print("Tweet", first_review)
-    # print(training_data)
-    # print("Class", training_data.class_names)
-    # print("Vectorized Tweet", vectorize_text(first_review, first_label))
-    # print("Tweet numpy -> ", vectorize_text(first_review, first_label)[0].numpy())
-    # print("5932 ->", vectorizer.get_vocabulary()[5932])
-    # print("2 ->", vectorizer.get_vocabulary()[2])
 
     # apply vectorization to the datasets
     train_dataset = training_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
@@ -87,7 +92,7 @@ def do_learning(data: pd.DataFrame):
     # create neural network
     embedding_dim = 16
     model = tf.keras.Sequential([
-        layers.Embedding(MAX_FEATURES, embedding_dim),
+        layers.Embedding(MAX_FEATURES+1, embedding_dim),
         layers.GlobalAveragePooling1D(),
         layers.Dense(16, activation='relu'),
         layers.Dense(3, activation='softmax')
@@ -95,14 +100,18 @@ def do_learning(data: pd.DataFrame):
     model.summary()
 
     model.compile(loss=losses.SparseCategoricalCrossentropy(), optimizer='adam', metrics=['accuracy'])
-    epochs=10
-    history = model.fit(train_dataset, validation_data=validation_dataset, epochs=epochs)
+    epochs=25
+    callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)
+    history = model.fit(train_dataset, validation_data=validation_dataset, epochs=epochs, callbacks=[callback])
 
     loss,accuracy = model.evaluate(test_dataset)
-    print(f"Loss={loss}")
-    print(f"Accuracy={accuracy}")
+    print(f"Evaluating {classifier_name} classifier:")
+    print(f"\tLoss={loss}")
+    print(f"\tAccuracy={accuracy}")
 
-    return None
+    model.summary()
+
+    return model,test_dataset
 
 
 def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
@@ -112,7 +121,8 @@ def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     df["Class"] = df["Class"].astype("str") # convert class labels to string for easier filtering
     if not ignore_class:
         df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
-    df["Class"] = df["Class"].astype("int") # convert class labels back to int after filtering
+    df["Class"] = df["Class"].astype("int32") # convert class labels back to int after filtering
+    df["Class"] = df["Class"] + 1 # shift the labels by one to fit with tensorflow then we can subtract later.
     df = df.dropna()
 
     # standardize text data?
@@ -123,20 +133,30 @@ def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     return df
 
 
+def evaluate_model(model, test_data):
+    examples = tf.constant(test_data["Anotated Tweet"].tolist())
+    model.predict(examples)
+
+
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("training", help="The training data to use for tweet classification.")
-    args.add_argument("test", help="The test data used to determine accuracy.")
+    args.add_argument("--custom-test", default=None, help="Test data used to evaluate the classifier. If not provided, the model will test against a fraction of the training data.")
     args.add_argument("--test-has-labels", action="store_true", help="If the test data has class labels, use these to calculate evaluation metrics.")
     args.add_argument("-o", "--output", help="The file to save the output to.")
     opts = args.parse_args()
 
     # load training data
     training_data = load_tweet_data(opts.training)
+    testing_data = load_tweet_data(opts.custom_test) if opts.custom_test else None
 
     # setup obama training,validation,test sets using the input data
     obama_training = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
-    classifier = do_learning(obama_training)
+    if testing_data is not None:
+        testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
+    
+    model,test_data = do_learning(obama_training, "Obama", testing_data)
+    evaluate_model(model, testing_data)
 
     # setup romney training,validation,test sets using the input data
     # romney_training = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
