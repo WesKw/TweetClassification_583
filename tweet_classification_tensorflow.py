@@ -11,6 +11,7 @@ from time import time
 from argparse import ArgumentParser
 from tensorflow.keras import layers
 from tensorflow.keras import losses
+from transformers import BertTokenizer
 
 VALID_CLASSES=['-1', '0', '1']
 
@@ -20,6 +21,8 @@ SPLIT_SEED=42
 BUFFER_SIZE=32
 VECT_NAME="text_vectorization"
 EPOCHS=15
+
+# STANDARDIZE_TWEET_REGEX
 
 
 def load_tweet_data(input: str) -> dict:
@@ -42,6 +45,26 @@ def tweet_standardization(input):
     # remove punctuation and various oddities (hyperlinks)
     stripped = tf.strings.regex_replace(lower, r'<e>|<\/e>|#|[^a-zA-Z\d\s:]+|http.[\S]+', ' ')
     return tf.strings.regex_replace(stripped, '[%s]' % re.escape(string.punctuation), '')
+
+
+def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
+    df = data.drop(index=0)
+    df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
+    df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
+    df["Class"] = df["Class"].astype("str") # convert class labels to string for easier filtering
+    if not ignore_class:
+        df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
+    df["Class"] = df["Class"].astype("int32") # convert class labels back to int after filtering
+    df["Class"] = df["Class"] + 1 # shift the labels by one to fit with tensorflow then we can subtract later.
+    df = df.dropna()
+    print(df)
+
+    # Even out class distribution
+
+    # todo:: fix datetimes?
+
+    # return cleaned df
+    return df
 
 
 def convert_pandas_df_to_tf_dataset(df: pd.DataFrame, batch_size=32, shuffle=True, force_binary: bool = False, positive_label: int = 2) -> tf.data.Dataset:
@@ -103,34 +126,6 @@ def do_learning_with_nn(data: pd.DataFrame, classifier_name: str, custom_test_da
     train_dataset = training_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
     validation_dataset = validation_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
     test_dataset = testing_data.map(vectorize_text).cache().prefetch(buffer_size=tf.data.AUTOTUNE)
-
-    # for x, y in train_dataset.take(1):
-    #     print("Input shape:", x.shape)  # want (batch_size, max_sequence_length)
-    #     print("Input dtype:", x.dtype)  # want int32 or int64
-    #     print("Label shape:", y.shape)  # want (batch_size,)
-    #     print("Unique labels:", np.unique(y.numpy()))  # want [0, 1, 2]
-    #     print("Sample input:", x[0].numpy())  # want integers, not all 0s
-
-    # vocab = vectorizer.get_vocabulary()
-    # print("Vocab size:", len(vocab))         # should be close to MAX_FEATURES
-    # print("Sample vocab:", vocab[:20]) 
-
-    # labels = np.concatenate([y.numpy() for x, y in train_dataset])
-    # print("Unique labels:", np.unique(labels))          # should be [0, 1, 2]
-    # print("Label distribution:", np.bincount(labels))   # check class balance
-
-    # for x, y in training_data.take(1):
-    #     print("Raw text sample:", x[0].numpy())   # should be a real tweet string
-    #     print("Raw label sample:", y[0].numpy())  # should be 0, 1, or 2
-
-    # lengths = []
-    # for x, y in train_dataset:
-    #     # count non-zero tokens per sample
-    #     lengths.extend(tf.math.count_nonzero(x, axis=1).numpy().tolist())
-
-    # print("Average tweet length:", np.mean(lengths))   # probably very short
-    # print("Max tweet length:", np.max(lengths))
-    # print("95th percentile:", np.percentile(lengths, 95))
 
     # create neural network
     embedding_dim = 64
@@ -265,26 +260,10 @@ def do_learning_multiple_binary(data: pd.DataFrame, classifier_name: str, custom
     neg_model,vectorizer = build_binary_model_for_class(tf_df, classifier_name, class_label=0)
 
     return (pos_model,vectorizer),(neg_model,vectorizer),test_df
-    
 
-def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
-    df = data.drop(index=0)
-    df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
-    df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
-    df["Class"] = df["Class"].astype("str") # convert class labels to string for easier filtering
-    if not ignore_class:
-        df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
-    df["Class"] = df["Class"].astype("int32") # convert class labels back to int after filtering
-    df["Class"] = df["Class"] + 1 # shift the labels by one to fit with tensorflow then we can subtract later.
-    df = df.dropna()
-    print(df)
 
-    # standardize text data?
-
-    # todo:: fix datetimes?
-
-    # return cleaned df
-    return df
+def fine_tune_bert(data: pd.DataFrame, classifier_name: str, custom_test_data: bool = False):
+    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 
 
 def determine_performance_metrics(modified_df: pd.DataFrame):
@@ -340,7 +319,7 @@ def evaluate_keras_model(model, test_data, vectorizer):
     df = test_df
     df["Class"] = df["Class"] - 1 # shift back the labels to match the original data
     df["Your Class"] = tweet_class
-    print(df)
+    # print(df)
 
     determine_performance_metrics(df)
 
@@ -357,8 +336,8 @@ def determine_performance_metrics_multibinary(positive_model, negative_model, te
     neg_mod = negative_model[0]
     neg_vect = negative_model[1]
 
-    positive_result = pos_mod.predict(pos_vect(test_df["Anotated Tweet"].to_numpy()))
-    negative_result = neg_mod.predict(neg_vect(test_df["Anotated Tweet"].to_numpy()))
+    positive_result = pos_mod.predict(pos_vect(testing_data["Anotated Tweet"].to_numpy()))
+    negative_result = neg_mod.predict(neg_vect(testing_data["Anotated Tweet"].to_numpy()))
     predicted_classes = []
 
     for pos_pred,neg_pred in zip(positive_result, negative_result):
@@ -425,6 +404,7 @@ if __name__ == "__main__":
     args.add_argument("--test-has-labels", action="store_true", help="If the test data has class labels, use these to calculate evaluation metrics.")
     args.add_argument("-o", "--output", help="The file to save the output to.")
     args.add_argument("--force-binary", action="store_true", help="Force 2 separate binary classifiers for classifying tweet data.")
+    args.add_argument("--method", action="append", help="Build a classifier using the given method.", choices=["multiclassifier", "multibinary", "bert"])
     opts = args.parse_args()
 
     # load training data
@@ -434,25 +414,30 @@ if __name__ == "__main__":
     # setup obama training,validation,test sets using the input data
     obama_training = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
     obama_testing_data = None
-    if testing_data is not None:
-        obama_testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
-    
-    if opts.force_binary:
-        pos_mod,neg_mod,test_df = do_learning_multiple_binary(obama_training, "Obama", obama_testing_data, use_safe_mask=False)
-        determine_performance_metrics_multibinary(pos_mod, neg_mod, test_df, "Obama")
-    else:
-        obama_model,obama_test_data,obama_vectorizer = do_learning_with_nn(obama_training, "Obama", obama_testing_data)
-        evaluate_keras_model(obama_model, obama_test_data, obama_vectorizer)
 
     # setup Romney training,validation,test sets using the input data
     romney_training = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
     romney_testing_data = None
+
     if testing_data is not None:
+        obama_testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
         romney_testing_data = clean_data(testing_data["Romney"], False).sample(frac=1).reset_index()
+
+    if "bert" in opts.method:
+        print("Fine-tuning a BERT model...")
     
-    if opts.force_binary:
-        pos_mod,neg_mod,test_df = do_learning_multiple_binary(romney_training, "Romney", romney_testing_data, use_safe_mask=True)
-        determine_performance_metrics_multibinary(pos_mod, neg_mod, test_df, "Romney")
-    else:
+    if "multibinary" in opts.method:
+        print("Building and testing multiple binary classifiers...")
+        obama_pos_mod,obama_neg_mod,obama_test_df = do_learning_multiple_binary(obama_training, "Obama", obama_testing_data, use_safe_mask=False)
+        romney_pos_mod,romney_neg_mod,romney_test_df = do_learning_multiple_binary(romney_training, "Romney", romney_testing_data, use_safe_mask=True)
+
+        determine_performance_metrics_multibinary(obama_pos_mod, obama_neg_mod, obama_test_df, "Obama")        
+        determine_performance_metrics_multibinary(romney_pos_mod, romney_neg_mod, romney_test_df, "Romney")
+
+    if "multiclassifier" in opts.method:
+        print("Building and testing 1 multi-class classifier...")
+        obama_model,obama_test_data,obama_vectorizer = do_learning_with_nn(obama_training, "Obama", obama_testing_data)
         romney_model,romney_test_data,romney_vectorizer = do_learning_with_nn(romney_training, "Romney", romney_testing_data)
+
+        evaluate_keras_model(obama_model, obama_test_data, obama_vectorizer)
         evaluate_keras_model(romney_model, romney_test_data, romney_vectorizer)
