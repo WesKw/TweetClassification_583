@@ -5,6 +5,7 @@ import string
 import requests
 import numpy as np
 import tensorflow_datasets as tfds
+import torch
 
 # from transformers import BertTokenizer, BertForSequenceClassification
 from time import time
@@ -37,6 +38,13 @@ def load_tweet_data(input: str) -> dict:
         romney_df = data["Romney"]
 
     return {"Obama": obama_df, "Romney": romney_df}
+
+
+def save_df_test_results(df_collection: list, classifier_names: list, output_file: str):
+    """Save the results to an xlsx file, with each dataframe in the collection as a separate sheet."""
+    with pd.ExcelWriter(f"./{output_file}.xlsx") as writer:
+        for df,classifier_name in zip(df_collection, classifier_names):
+            df.to_excel(writer, sheet_name=f"{classifier_name}", index=False)
 
 
 # standardize tweet text
@@ -396,16 +404,23 @@ def determine_performance_metrics_multibinary(positive_model, negative_model, te
     determine_precision_recall_f1_for_class(modified_df, 1)
     determine_precision_recall_f1_for_class(modified_df, -1)
 
+    return modified_df
+
 
 if __name__ == "__main__":
     args = ArgumentParser()
     args.add_argument("training", help="The training data to use for tweet classification.")
     args.add_argument("--custom-test", default=None, help="Test data used to evaluate the classifier. If not provided, the model will test against a fraction of the training data.")
     args.add_argument("--test-has-labels", action="store_true", help="If the test data has class labels, use these to calculate evaluation metrics.")
-    args.add_argument("-o", "--output", help="The file to save the output to.")
     args.add_argument("--force-binary", action="store_true", help="Force 2 separate binary classifiers for classifying tweet data.")
     args.add_argument("--method", action="append", help="Build a classifier using the given method.", choices=["multiclassifier", "multibinary", "bert"])
+    args.add_argument("--save-test-results", action="store_true", help="Whether to save the test results to a file. Takes a file name. If not set, the test results will just be printed to the console.")
     opts = args.parse_args()
+
+    print(f"CUDA Available: {torch.cuda.is_available()}")
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+    exit()
 
     # load training data
     training_data = load_tweet_data(opts.training)
@@ -431,13 +446,19 @@ if __name__ == "__main__":
         obama_pos_mod,obama_neg_mod,obama_test_df = do_learning_multiple_binary(obama_training, "Obama", obama_testing_data, use_safe_mask=False)
         romney_pos_mod,romney_neg_mod,romney_test_df = do_learning_multiple_binary(romney_training, "Romney", romney_testing_data, use_safe_mask=True)
 
-        determine_performance_metrics_multibinary(obama_pos_mod, obama_neg_mod, obama_test_df, "Obama")        
-        determine_performance_metrics_multibinary(romney_pos_mod, romney_neg_mod, romney_test_df, "Romney")
+        obama_test_results = determine_performance_metrics_multibinary(obama_pos_mod, obama_neg_mod, obama_test_df, "Obama")        
+        romney_test_results = determine_performance_metrics_multibinary(romney_pos_mod, romney_neg_mod, romney_test_df, "Romney")
+
+        if opts.save_test_results:
+            save_df_test_results([obama_test_results, romney_test_results], ["Obama", "Romney"], "results_multibinary")
 
     if "multiclassifier" in opts.method:
         print("Building and testing 1 multi-class classifier...")
         obama_model,obama_test_data,obama_vectorizer = do_learning_with_nn(obama_training, "Obama", obama_testing_data)
         romney_model,romney_test_data,romney_vectorizer = do_learning_with_nn(romney_training, "Romney", romney_testing_data)
 
-        evaluate_keras_model(obama_model, obama_test_data, obama_vectorizer)
-        evaluate_keras_model(romney_model, romney_test_data, romney_vectorizer)
+        obama_test_results = evaluate_keras_model(obama_model, obama_test_data, obama_vectorizer)
+        romney_test_results = evaluate_keras_model(romney_model, romney_test_data, romney_vectorizer)
+
+        if opts.save_test_results:
+            save_df_test_results([obama_test_results, romney_test_results], ["Obama", "Romney"], "results_single")
