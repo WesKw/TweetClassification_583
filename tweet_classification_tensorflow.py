@@ -6,13 +6,17 @@ import requests
 import numpy as np
 import tensorflow_datasets as tfds
 import torch
+import transformers
+import zipfile
 
-# from transformers import BertTokenizer, BertForSequenceClassification
 from time import time
 from argparse import ArgumentParser
+from datasets import Dataset
 from tensorflow.keras import layers
 from tensorflow.keras import losses
 from transformers import BertTokenizer
+from transformers import BertForSequenceClassification
+from transformers import TrainingArguments,Trainer
 
 VALID_CLASSES=['-1', '0', '1']
 
@@ -23,7 +27,7 @@ BUFFER_SIZE=32
 VECT_NAME="text_vectorization"
 EPOCHS=15
 
-# STANDARDIZE_TWEET_REGEX
+STANDARDIZE_TWEET_REGEX=r'<e>|<\/e>|#|[^a-zA-Z\d\s:]+|http.[\S]+'
 
 
 def load_tweet_data(input: str) -> dict:
@@ -42,30 +46,43 @@ def load_tweet_data(input: str) -> dict:
 
 def save_df_test_results(df_collection: list, classifier_names: list, output_file: str):
     """Save the results to an xlsx file, with each dataframe in the collection as a separate sheet."""
-    with pd.ExcelWriter(f"./{output_file}.xlsx") as writer:
-        for df,classifier_name in zip(df_collection, classifier_names):
-            df.to_excel(writer, sheet_name=f"{classifier_name}", index=False)
+    # with pd.ExcelWriter(f"./{output_file}.xlsx") as writer:
+    #     for df,classifier_name in zip(df_collection, classifier_names):
+    #         df.to_excel(writer, sheet_name=f"{classifier_name}", index=False)
+
+    for df,name in zip(df_collection, classifier_names):
+        print("Outputting results to txt file")
+        with open(name + ".txt", "w") as f:
+            f.write("(setf x *(\n")
+            for index,row in df.iterrows():
+                f.write(f"({index} {row['Your Class']})\n")
+            f.write("))\n")
+    
+    zip_name = "WesleyKwiecinski.zip"
+    with zipfile.ZipFile(zip_name, 'w') as zipf:
+        zipf.write(classifier_names[0] + ".txt")
+        zipf.write(classifier_names[1] + ".txt")
 
 
 # standardize tweet text
 def tweet_standardization(input):
     lower = tf.strings.lower(input)
     # remove punctuation and various oddities (hyperlinks)
-    stripped = tf.strings.regex_replace(lower, r'<e>|<\/e>|#|[^a-zA-Z\d\s:]+|http.[\S]+', ' ')
+    stripped = tf.strings.regex_replace(lower, STANDARDIZE_TWEET_REGEX, ' ')
     return tf.strings.regex_replace(stripped, '[%s]' % re.escape(string.punctuation), '')
 
 
 def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     df = data.drop(index=0)
     df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
-    df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
+    df = df.drop(labels=['None', 'date', 'time', 'Yourclass'], axis=1) # drop irrelevant labels
     df["Class"] = df["Class"].astype("str") # convert class labels to string for easier filtering
     if not ignore_class:
         df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
     df["Class"] = df["Class"].astype("int32") # convert class labels back to int after filtering
     df["Class"] = df["Class"] + 1 # shift the labels by one to fit with tensorflow then we can subtract later.
     df = df.dropna()
-    print(df)
+    # print(df)
 
     # Even out class distribution
 
@@ -222,9 +239,6 @@ def do_learning_multiple_binary(data: pd.DataFrame, classifier_name: str, custom
             seed=SPLIT_SEED
         )
 
-        # print(training)
-        # print(validation)
-
         # create vectorization layer
         vectorizer = layers.TextVectorization(standardize=tweet_standardization, output_mode='int', output_sequence_length=MAX_SEQUENCE_LENGTH)
 
@@ -272,6 +286,65 @@ def do_learning_multiple_binary(data: pd.DataFrame, classifier_name: str, custom
 
 def fine_tune_bert(data: pd.DataFrame, classifier_name: str, custom_test_data: bool = False):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+    model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=3) # positive, negative, neutral labels
+    
+    training_set = None
+    test_set = None
+    validation_set = None
+
+    if custom_test_data is not None:
+        # prep the custom test data if using, otherwise we just split the training data.
+        test_set = Dataset.from_pandas(custom_test_data)
+        training_set = data.sample(frac=0.8)
+        validation_set = data.drop(training_set.index)
+    else:
+        training_set = data.sample(frac=0.8)
+        test_set = data.drop(training_set.index)
+        test_set = Dataset.from_pandas(test_set)
+
+        validation_set = training_set.sample(frac=0.2)
+        training_set = training_set.drop(validation_set.index)
+
+        training_set = Dataset.from_pandas(training_set)
+        validation_set = Dataset.from_pandas(validation_set)
+
+    print(training_set["Anotated Tweet"][0])
+
+    # training_tokenizer = tokenizer(
+    #     training_set["Anotated Tweet"].str.replace(STANDARDIZE_TWEET_REGEX, ' ', regex=True).tolist(),
+    #     padding="max_length", 
+    #     truncation=True,
+    #     max_length=MAX_SEQUENCE_LENGTH, 
+    #     return_tensors="pt"
+    # )
+
+    # training_arguments = TrainingArguments(
+    #     output_dir=f"./bert_{classifier_name}",
+    #     num_train_epochs=EPOCHS,
+    #     per_device_train_batch_size=16,
+    #     per_device_eval_batch_size=16,
+    #     evaluation_strategy="epoch",
+    #     save_strategy="epoch",
+    #     logging_dir=f"./logs_{classifier_name}",
+    #     logging_steps=5,
+    #     load_best_model_at_end=True,
+    #     fp16=True
+    # )
+
+    # trainer = Trainer(
+    #     model=model,
+    #     args=training_arguments,
+    # )
+
+    # print(torch.__version__)
+    # print(torch.cuda.is_available())
+    # print(torch.version.cuda)  # Must match your system CUDA
+
+    print("Fine-tuning existing BERT model...")
+
+
+def determine_bert_performance_metrics(model, test_data, vectorizer):
+    ...
 
 
 def determine_performance_metrics(modified_df: pd.DataFrame):
@@ -415,12 +488,8 @@ if __name__ == "__main__":
     args.add_argument("--force-binary", action="store_true", help="Force 2 separate binary classifiers for classifying tweet data.")
     args.add_argument("--method", action="append", help="Build a classifier using the given method.", choices=["multiclassifier", "multibinary", "bert"])
     args.add_argument("--save-test-results", action="store_true", help="Whether to save the test results to a file. Takes a file name. If not set, the test results will just be printed to the console.")
+    args.add_argument("--save-bert-model", action="store_true", help="Whether to save the fine-tuned BERT model to a file named bert_model.pt")
     opts = args.parse_args()
-
-    print(f"CUDA Available: {torch.cuda.is_available()}")
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-    exit()
 
     # load training data
     training_data = load_tweet_data(opts.training)
@@ -440,7 +509,18 @@ if __name__ == "__main__":
 
     if "bert" in opts.method:
         print("Fine-tuning a BERT model...")
-    
+        print(f"CUDA Available: {torch.cuda.is_available()}")
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+
+        obama_model,obama_test_data,obama_vectorizer = fine_tune_bert(obama_training, "Obama", obama_testing_data)
+        romney_model,romney_test_data,romney_vectorizer = fine_tune_bert(romney_training, "Romney", romney_testing_data)
+
+        # determine_bert_performance_metrics(obama_model, obama_test_data, obama_vectorizer)
+        # determine_bert_performance_metrics(romney_model, romney_test_data, romney_vectorizer)
+
+        # if opts.save_test_results:
+        #     save_df_test_results([obama_test_results, romney_test_results], ["Obama", "Romney"], "results_bert")
+
     if "multibinary" in opts.method:
         print("Building and testing multiple binary classifiers...")
         obama_pos_mod,obama_neg_mod,obama_test_df = do_learning_multiple_binary(obama_training, "Obama", obama_testing_data, use_safe_mask=False)
