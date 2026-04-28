@@ -3,7 +3,6 @@ import tensorflow as tf
 import re
 import string
 import numpy as np
-import torch
 import zipfile
 
 from time import time
@@ -176,7 +175,8 @@ def do_learning_with_nn(data: pd.DataFrame, classifier_name: str, custom_test_da
 
 def prep_data_for_multiple_binary(df: pd.DataFrame, batch_size=32, shuffle=True) -> pd.DataFrame:
     # convert pandas dataframe to tf dataset
-    tf_df = df.drop(columns=["index", "date", "time"]).reset_index()
+    # tf_df = df.drop(columns=["index", "date", "time"]).reset_index()
+    tf_df = df.reset_index()
 
     tf_df["BinaryPositive"] = tf_df["Class"].apply(lambda x: 0 if x != 2 else 1)
     tf_df["BinaryNegative"] = tf_df["Class"].apply(lambda x: 0 if x != 0 else 1)
@@ -438,19 +438,9 @@ if __name__ == "__main__":
         obama_testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
         romney_testing_data = clean_data(testing_data["Romney"], False).sample(frac=1).reset_index()
 
-    if "bert" in opts.method:
-        print("Fine-tuning a BERT model...")
-        print(f"CUDA Available: {torch.cuda.is_available()}")
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-        obama_model,obama_test_data,obama_vectorizer = fine_tune_bert(obama_training, "Obama", obama_testing_data)
-        romney_model,romney_test_data,romney_vectorizer = fine_tune_bert(romney_training, "Romney", romney_testing_data)
-
-        # determine_bert_performance_metrics(obama_model, obama_test_data, obama_vectorizer)
-        # determine_bert_performance_metrics(romney_model, romney_test_data, romney_vectorizer)
-
-        # if opts.save_test_results:
-        #     save_df_test_results([obama_test_results, romney_test_results], ["Obama", "Romney"], "results_bert")
+    if not opts.method:
+        print("Nothing to do.")
+        exit()
 
     if "multibinary" in opts.method:
         print("Building and testing multiple binary classifiers...")
