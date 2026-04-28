@@ -2,11 +2,8 @@ import pandas as pd
 import tensorflow as tf
 import re
 import string
-import requests
 import numpy as np
-import tensorflow_datasets as tfds
 import torch
-import transformers
 import zipfile
 
 from time import time
@@ -14,9 +11,6 @@ from argparse import ArgumentParser
 from datasets import Dataset
 from tensorflow.keras import layers
 from tensorflow.keras import losses
-from transformers import BertTokenizer
-from transformers import BertForSequenceClassification
-from transformers import TrainingArguments,Trainer
 
 VALID_CLASSES=['-1', '0', '1']
 
@@ -282,69 +276,6 @@ def do_learning_multiple_binary(data: pd.DataFrame, classifier_name: str, custom
     neg_model,vectorizer = build_binary_model_for_class(tf_df, classifier_name, class_label=0)
 
     return (pos_model,vectorizer),(neg_model,vectorizer),test_df
-
-
-def fine_tune_bert(data: pd.DataFrame, classifier_name: str, custom_test_data: bool = False):
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    model = BertForSequenceClassification.from_pretrained("bert-base-uncased", num_labels=3) # positive, negative, neutral labels
-    
-    training_set = None
-    test_set = None
-    validation_set = None
-
-    if custom_test_data is not None:
-        # prep the custom test data if using, otherwise we just split the training data.
-        test_set = Dataset.from_pandas(custom_test_data)
-        training_set = data.sample(frac=0.8)
-        validation_set = data.drop(training_set.index)
-    else:
-        training_set = data.sample(frac=0.8)
-        test_set = data.drop(training_set.index)
-        test_set = Dataset.from_pandas(test_set)
-
-        validation_set = training_set.sample(frac=0.2)
-        training_set = training_set.drop(validation_set.index)
-
-        training_set = Dataset.from_pandas(training_set)
-        validation_set = Dataset.from_pandas(validation_set)
-
-    print(training_set["Anotated Tweet"][0])
-
-    # training_tokenizer = tokenizer(
-    #     training_set["Anotated Tweet"].str.replace(STANDARDIZE_TWEET_REGEX, ' ', regex=True).tolist(),
-    #     padding="max_length", 
-    #     truncation=True,
-    #     max_length=MAX_SEQUENCE_LENGTH, 
-    #     return_tensors="pt"
-    # )
-
-    # training_arguments = TrainingArguments(
-    #     output_dir=f"./bert_{classifier_name}",
-    #     num_train_epochs=EPOCHS,
-    #     per_device_train_batch_size=16,
-    #     per_device_eval_batch_size=16,
-    #     evaluation_strategy="epoch",
-    #     save_strategy="epoch",
-    #     logging_dir=f"./logs_{classifier_name}",
-    #     logging_steps=5,
-    #     load_best_model_at_end=True,
-    #     fp16=True
-    # )
-
-    # trainer = Trainer(
-    #     model=model,
-    #     args=training_arguments,
-    # )
-
-    # print(torch.__version__)
-    # print(torch.cuda.is_available())
-    # print(torch.version.cuda)  # Must match your system CUDA
-
-    print("Fine-tuning existing BERT model...")
-
-
-def determine_bert_performance_metrics(model, test_data, vectorizer):
-    ...
 
 
 def determine_performance_metrics(modified_df: pd.DataFrame):
