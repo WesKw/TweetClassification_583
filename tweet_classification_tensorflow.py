@@ -65,7 +65,7 @@ def tweet_standardization(input):
     return tf.strings.regex_replace(stripped, '[%s]' % re.escape(string.punctuation), '')
 
 
-def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
+def clean_data(data: pd.DataFrame, ignore_class=False, balance_dataset: bool=False) -> pd.DataFrame:
     df = data.drop(index=0)
     df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
     df = df.drop(labels=['None', 'date', 'time', 'Yourclass'], axis=1) # drop irrelevant labels
@@ -75,7 +75,18 @@ def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
     df["Class"] = df["Class"].astype("int32") # convert class labels back to int after filtering
     df["Class"] = df["Class"] + 1 # shift the labels by one to fit with tensorflow then we can subtract later.
     df = df.dropna()
-    # print(df)
+
+    print(df)
+
+    # balance the dataset by undersampling the majority class
+    if balance_dataset:
+        g = df.groupby("Class", group_keys=False)
+        print(g)
+        balanced_df = pd.DataFrame(g.apply(lambda x: x.sample(g.size().min()))).reset_index(drop=False).sort_values("index")
+        balanced_df = balanced_df.join(df["Class"], on="index", how="left").reset_index(drop=True)
+        print(balanced_df)
+        df = balanced_df
+        df.drop(columns=["index"], inplace=True)
 
     # Even out class distribution
 
@@ -419,7 +430,7 @@ if __name__ == "__main__":
     args.add_argument("--force-binary", action="store_true", help="Force 2 separate binary classifiers for classifying tweet data.")
     args.add_argument("--method", action="append", help="Build a classifier using the given method.", choices=["multiclassifier", "multibinary", "bert"])
     args.add_argument("--save-test-results", action="store_true", help="Whether to save the test results to a file. Takes a file name. If not set, the test results will just be printed to the console.")
-    args.add_argument("--save-bert-model", action="store_true", help="Whether to save the fine-tuned BERT model to a file named bert_model.pt")
+    args.add_argument("--balance-dataset", action="store_true", help="Whether to balance the dataset by undersampling the majority class.")
     opts = args.parse_args()
 
     # load training data
@@ -427,11 +438,11 @@ if __name__ == "__main__":
     testing_data = load_tweet_data(opts.custom_test) if opts.custom_test else None
 
     # setup obama training,validation,test sets using the input data
-    obama_training = clean_data(training_data["Obama"], False).sample(frac=1).reset_index()
+    obama_training = clean_data(training_data["Obama"], False, opts.balance_dataset).sample(frac=1).reset_index()
     obama_testing_data = None
 
     # setup Romney training,validation,test sets using the input data
-    romney_training = clean_data(training_data["Romney"], False).sample(frac=1).reset_index()
+    romney_training = clean_data(training_data["Romney"], False, opts.balance_dataset).sample(frac=1).reset_index()
     romney_testing_data = None
 
     if testing_data is not None:
