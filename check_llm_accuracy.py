@@ -6,47 +6,53 @@ from argparse import ArgumentParser
 CLASS_MAPPING = {
     "Negative": -1,
     "Positive": 1,
-    "Mixed": 0,
-    "Neutral": 2
+    "Neutral": 0,
+    "Mixed": 2,
+    "positive": 1,
+    "negative": -1,
+    "neutral": 0,
+    "mixed": 2
 }
 
 
 def determine_accuracy(test, result, name=""):
     total_count = len(test["Class"])
-    test["Your Class"] = result["Class"]
-    test["Correct"] = (test["Class"] == test["Your Class"])
+    test["Predicted Class"] = result["Class"]
+    test["Correct"] = (test["Class"] == test["Predicted Class"])
     test["Correct"] = test["Correct"].astype("int")
     correct = test["Correct"].sum()
     print(f"Accuracy for {name}: {correct/total_count:.02f}")
 
 
-def clean_data(data: pd.DataFrame, ignore_class=False) -> pd.DataFrame:
-    df = data.drop(index=0)
-    df = df.set_axis(labels=['None', 'date', 'time', 'Anotated Tweet', 'Class', 'Yourclass'], axis=1) # fix labels
-    df = df.drop(labels=['None', 'Yourclass'], axis=1) # drop irrelevant labels
-    df["Class"] = df["Class"].astype("string")
-    # if not ignore_class:
-    #     df = df[df["Class"].isin(VALID_CLASSES)] # remove any rows that have bad class labels
-    df = df.dropna()
-
-    # todo:: fix datetimes?
-
-    # return cleaned df
-    return df
-
-
-def load_tweet_data(input: str) -> dict:
+def load_input_data(input: str) -> dict:
     """
     Loads tweets into a pandas dataframe. Input is assumed to be an xlsx file.
     """
-    obama_df = pd.DataFrame()
-    romney_df = pd.DataFrame()
+    df = pd.DataFrame()
+    if ".xlsx" in input:
+        data = pd.read_excel(input, sheet_name=None, header=None)
+        df = data["Sheet1"]
+        df = df.set_axis(labels=[0, "Tweet", 2, 3, 4, "5"], axis=1)
+        df["Class"] = df["5"]
+        df.drop(columns=[0, 2, 3, 4, "5"], inplace=True)
+        print(df)
+
+    return df
+
+
+def load_result_data(input: str) -> dict:
+    """
+    Loads results into a pandas dataframe. Input is assumed to be an xlsx file.
+    """
+    df = pd.DataFrame()
     if ".xlsx" in input:
         data = pd.read_excel(input, sheet_name=None, header=0)
-        obama_df = data["Obama"]
-        romney_df = data["Romney"]
+        results_df = data["Tweet Classifications"]
+        results_df["Class"] = results_df["Class"].map(lambda x: CLASS_MAPPING[x])
+        results_df["Class"] = results_df["Class"].astype("int")
+        print(results_df)
 
-    return {"Obama": obama_df, "Romney": romney_df}
+    return results_df
 
 
 if __name__ == "__main__":
@@ -57,20 +63,6 @@ if __name__ == "__main__":
     args.add_argument("-o", "--output", help="The file to save the output to.")
     opts = args.parse_args()
 
-    test_df = load_tweet_data(opts.test_input)
-    obama_df = clean_data(test_df["Obama"]).reset_index()
-    romney_df = clean_data(test_df["Romney"]).reset_index()
-    print(obama_df)
-    print(romney_df)
-    results_df = load_tweet_data(opts.results)
-    obama_results = results_df["Obama"].set_axis(labels=["Tweet", "Class"], axis=1)
-    obama_results["Class"] = obama_results["Class"].map(lambda x: CLASS_MAPPING[x])
-    obama_results["Class"] = obama_results["Class"].astype("string")
-    romney_results = results_df["Romney"].set_axis(labels=["Tweet", "Class"], axis=1)
-    romney_results["Class"] = romney_results["Class"].map(lambda x: CLASS_MAPPING[x])
-    romney_results["Class"] = romney_results["Class"].astype("string")
-    print(obama_results)
-    print(romney_results)
-
-    determine_accuracy(obama_df, obama_results, "Obama")
-    determine_accuracy(romney_df, romney_results, "Romney")
+    test_df = load_input_data(opts.test_input)
+    results_df = load_result_data(opts.results)
+    determine_accuracy(test_df, results_df, "Candidates")

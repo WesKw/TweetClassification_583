@@ -358,7 +358,7 @@ def evaluate_keras_model(model, test_data, vectorizer):
     return df
 
 
-def determine_performance_metrics_multibinary(positive_model, negative_model, testing_data, classifier_label):
+def determine_performance_metrics_multibinary(positive_model, negative_model, testing_data, classifier_label, skip_metrics=False):
     """
     Determines accuracy, precision, recall, and f1 score for a dataframe. The dataframe is expected to have a 
     "Class" column with the true class labels and a "Your Class" column with the predicted class labels.
@@ -396,8 +396,11 @@ def determine_performance_metrics_multibinary(positive_model, negative_model, te
             predicted_classes.append(-1)
 
     modified_df = testing_data
-    modified_df["Class"] = modified_df["Class"] - 1
     modified_df["Your Class"] = predicted_classes
+    if skip_metrics:
+        return modified_df
+
+    modified_df["Class"] = modified_df["Class"] - 1
 
     def determine_accuracy(df: pd.DataFrame):
         correct = df[df["Class"] == df["Your Class"]]
@@ -458,9 +461,6 @@ if __name__ == "__main__":
     if testing_data is not None:
         obama_testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
         romney_testing_data = clean_data(testing_data["Romney"], False).sample(frac=1).reset_index()
-    elif opts.evaluation:
-        obama_testing_data = load_prof_test_data(opts.evaluation[0]).sample(frac=1).reset_index()
-        romney_testing_data = load_prof_test_data(opts.evaluation[1]).sample(frac=1).reset_index()
 
     if not opts.method:
         print("Nothing to do.")
@@ -470,9 +470,15 @@ if __name__ == "__main__":
         print("Building and testing multiple binary classifiers...")
         obama_pos_mod,obama_neg_mod,obama_test_df = do_learning_multiple_binary(obama_training, "Obama", obama_testing_data, use_safe_mask=False)
         romney_pos_mod,romney_neg_mod,romney_test_df = do_learning_multiple_binary(romney_training, "Romney", romney_testing_data, use_safe_mask=True)
+        skip_metrics = False
+        
+        if opts.evaluation:
+            obama_test_df = load_prof_test_data(opts.evaluation[0]).sample(frac=1).reset_index()
+            romney_test_df = load_prof_test_data(opts.evaluation[1]).sample(frac=1).reset_index()
+            skip_metrics = True
 
-        obama_test_results = determine_performance_metrics_multibinary(obama_pos_mod, obama_neg_mod, obama_test_df, "Obama")        
-        romney_test_results = determine_performance_metrics_multibinary(romney_pos_mod, romney_neg_mod, romney_test_df, "Romney")
+        obama_test_results = determine_performance_metrics_multibinary(obama_pos_mod, obama_neg_mod, obama_test_df, "Obama", skip_metrics)        
+        romney_test_results = determine_performance_metrics_multibinary(romney_pos_mod, romney_neg_mod, romney_test_df, "Romney", skip_metrics)
 
         if opts.save_test_results:
             save_df_test_results([obama_test_results, romney_test_results], ["Obama", "Romney"], "results_multibinary")
