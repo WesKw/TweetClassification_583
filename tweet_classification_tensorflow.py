@@ -96,6 +96,15 @@ def clean_data(data: pd.DataFrame, ignore_class=False, balance_dataset: bool=Fal
     return df
 
 
+def load_prof_test_data(input: str) -> pd.DataFrame:
+    df = pd.read_excel(input, header=None)
+    df = df.set_axis(labels=['index', 'Anotated Tweet'], axis=1) # fix labels
+
+    print(df)
+
+    return df
+
+
 def convert_pandas_df_to_tf_dataset(df: pd.DataFrame, batch_size=32, shuffle=True, force_binary: bool = False, positive_label: int = 2) -> tf.data.Dataset:
     # convert pandas dataframe to tf dataset
     df = df.drop(columns=["index", "date", "time"]).reset_index()
@@ -431,6 +440,7 @@ if __name__ == "__main__":
     args.add_argument("--method", action="append", help="Build a classifier using the given method.", choices=["multiclassifier", "multibinary", "bert"])
     args.add_argument("--save-test-results", action="store_true", help="Whether to save the test results to a file. Takes a file name. If not set, the test results will just be printed to the console.")
     args.add_argument("--balance-dataset", action="store_true", help="Whether to balance the dataset by undersampling the majority class.")
+    args.add_argument("--evaluation", action="append", help="Test data for evaluation.")
     opts = args.parse_args()
 
     # load training data
@@ -448,6 +458,9 @@ if __name__ == "__main__":
     if testing_data is not None:
         obama_testing_data = clean_data(testing_data["Obama"], False).sample(frac=1).reset_index()
         romney_testing_data = clean_data(testing_data["Romney"], False).sample(frac=1).reset_index()
+    elif opts.evaluation:
+        obama_testing_data = load_prof_test_data(opts.evaluation[0]).sample(frac=1).reset_index()
+        romney_testing_data = load_prof_test_data(opts.evaluation[1]).sample(frac=1).reset_index()
 
     if not opts.method:
         print("Nothing to do.")
